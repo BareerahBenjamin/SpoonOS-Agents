@@ -1,0 +1,16 @@
+services:
+  workbench:
+    build: .
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      RESEARCH_DB_PATH: /data/research.sqlite3
+    ports:
+      - "127.0.0.1:${SPOONOS_PORT:-8000}:8000"
+    volumes:
+      - research-data:/data
+    stop_grace_period: 20s
+
+volumes:
+  research-data:

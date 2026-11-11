@@ -1,252 +1,293 @@
-"""
-Cryptocurrency data tools
-"""
+"""Read-only market tools implemented with SpoonOS BaseTool."""
 
+import math
 import os
+from datetime import datetime, timezone
+from statistics import mean
+
 import requests
-from typing import Dict, Any, Optional
-from loguru import logger
+from pydantic import Field
+
+from tools.base import (
+    AssetInput,
+    DataQualityError,
+    ResearchTool,
+    failure_reason,
+    metadata,
+    request_json,
+)
+from tools.search_tools import TavilySearchTool
+
+COINS = {
+    "BTC": "bitcoin",
+    "ETH": "ethereum",
+    "BNB": "binancecoin",
+    "SOL": "solana",
+    "ADA": "cardano",
+    "XRP": "ripple",
+    "DOT": "polkadot",
+    "DOGE": "dogecoin",
+    "AVAX": "avalanche-2",
+    "POL": "polygon-ecosystem-token",
+    "MATIC": "matic-network",
+    "LINK": "chainlink",
+    "UNI": "uniswap",
+    "ATOM": "cosmos",
+    "LTC": "litecoin",
+    "BCH": "bitcoin-cash",
+}
 
 
-class BaseTool:
-    """Base class for all tools"""
-
-    name: str = "base_tool"
-    description: str = "Base tool"
-
-    def run(self, **kwargs) -> Any:
-        """Execute the tool"""
-        raise NotImplementedError
+def coin_id(symbol: str) -> str:
+    # Non-mapped input must be a CoinGecko asset ID, not an ambiguous ticker lookup.
+    return COINS.get(symbol.upper(), symbol.lower())
 
 
-class CryptoPriceTool(BaseTool):
-    """Tool to get cryptocurrency price data"""
+def coingecko_config() -> tuple[str, dict]:
+    plan = os.getenv("COINGECKO_PLAN", "demo").lower()
+    if plan not in {"demo", "pro"}:
+        raise ValueError("COINGECKO_PLAN must be demo or pro")
+    key = os.getenv("COINGECKO_API_KEY", "")
+    if "your-" in key:
+        key = ""
+    if plan == "pro" and not key:
+        raise ValueError("COINGECKO_API_KEY is required for the pro plan")
+    host = "pro-api" if plan == "pro" else "api"
+    headers = {f"x-cg-{plan}-api-key": key} if key else {}
+    return f"https://{host}.coingecko.com/api/v3", headers
 
-    name = "get_crypto_price"
-    description = "Get current price, market cap, volume, and 24h change for a cryptocurrency. Input should be a symbol like 'BTC' or 'ETH'."
 
-    def __init__(self):
-        self.base_url = "https://api.coingecko.com/api/v3"
-        self.api_key = os.getenv("COINGECKO_API_KEY", "")
+def finite_number(value) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
-    def _get_coin_id(self, symbol: str) -> Optional[str]:
-        """Convert symbol to CoinGecko ID"""
-        # Common mappings
-        symbol_map = {
-            "BTC": "bitcoin",
-            "ETH": "ethereum",
-            "BNB": "binancecoin",
-            "SOL": "solana",
-            "ADA": "cardano",
-            "XRP": "ripple",
-            "DOT": "polkadot",
-            "DOGE": "dogecoin",
-            "AVAX": "avalanche-2",
-            "MATIC": "matic-network",
-            "LINK": "chainlink",
-            "UNI": "uniswap",
-            "ATOM": "cosmos",
-            "LTC": "litecoin",
-            "BCH": "bitcoin-cash",
-        }
 
-        return symbol_map.get(symbol.upper(), symbol.lower())
+class CoinGeckoTool(ResearchTool):
+    def model_post_init(self, context):
+        if not self.demo_mode:
+            coingecko_config()
 
-    def run(self, symbol: str) -> Dict[str, Any]:
-        """
-        Get cryptocurrency price data
 
-        Args:
-            symbol: Cryptocurrency symbol (e.g., "BTC", "ETH")
+class CryptoPriceTool(CoinGeckoTool):
+    name: str = "get_crypto_price"
+    description: str = "Get a USD CoinGecko snapshot with source, timestamps and availability."
+    parameters: dict = AssetInput.model_json_schema()
+    input_model = AssetInput
 
-        Returns:
-            Dictionary with price data
-        """
-        try:
-            coin_id = self._get_coin_id(symbol)
+    def _get_coin_id(self, symbol: str) -> str:
+        return coin_id(symbol)
 
-            # Call CoinGecko API
-            url = f"{self.base_url}/coins/{coin_id}"
-            params = {
-                "localization": "false",
-                "tickers": "false",
-                "market_data": "true",
-                "community_data": "false",
-                "developer_data": "false",
-            }
-
-            headers = {}
-            if self.api_key:
-                headers["x-cg-pro-api-key"] = self.api_key
-
-            response = requests.get(url, params=params, headers=headers, timeout=10)
-            response.raise_for_status()
-
-            data = response.json()
-
-            # Extract relevant data
-            market_data = data.get("market_data", {})
-
-            result = {
-                "symbol": symbol.upper(),
-                "name": data.get("name", ""),
-                "current_price": market_data.get("current_price", {}).get("usd", 0),
-                "market_cap": market_data.get("market_cap", {}).get("usd", 0),
-                "total_volume": market_data.get("total_volume", {}).get("usd", 0),
-                "price_change_24h": market_data.get("price_change_24h", 0),
-                "price_change_percentage_24h": market_data.get("price_change_percentage_24h", 0),
-                "market_cap_rank": market_data.get("market_cap_rank", 0),
-                "high_24h": market_data.get("high_24h", {}).get("usd", 0),
-                "low_24h": market_data.get("low_24h", {}).get("usd", 0),
-                "ath": market_data.get("ath", {}).get("usd", 0),  # All-time high
-                "atl": market_data.get("atl", {}).get("usd", 0),  # All-time low
-            }
-
-            logger.info(f"Fetched price data for {symbol}: ${result['current_price']:,.2f}")
-            return result
-
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error fetching price for {symbol}: {e}")
-            # Return mock data for demo purposes
+    def _run(self, symbol: str) -> dict:
+        asset_id = coin_id(symbol)
+        base = {"symbol": symbol, "asset_id": asset_id, "currency": "usd"}
+        if self.demo_mode:
             return {
-                "symbol": symbol.upper(),
-                "name": symbol,
-                "current_price": 50000 if symbol.upper() == "BTC" else 3000,
-                "market_cap": 1000000000000,
-                "total_volume": 50000000000,
-                "price_change_24h": 500,
+                **base,
+                **metadata("mock", "demo"),
+                "current_price": 50000.0,
                 "price_change_percentage_24h": 1.2,
-                "market_cap_rank": 1,
-                "high_24h": 51000 if symbol.upper() == "BTC" else 3100,
-                "low_24h": 49000 if symbol.upper() == "BTC" else 2900,
-                "ath": 69000 if symbol.upper() == "BTC" else 4800,
-                "atl": 100 if symbol.upper() == "BTC" else 0.5,
-                "_note": "Mock data - API error occurred"
+                "market_cap": 1e12,
+                "total_volume": 5e10,
             }
-
-
-class CryptoNewsTool(BaseTool):
-    """Tool to get cryptocurrency news"""
-
-    name = "get_crypto_news"
-    description = "Get latest news articles about a cryptocurrency. Input should be a symbol like 'BTC' or 'ETH'."
-
-    def run(self, symbol: str, limit: int = 5) -> Dict[str, Any]:
-        """
-        Get cryptocurrency news
-
-        Args:
-            symbol: Cryptocurrency symbol
-            limit: Number of articles to return
-
-        Returns:
-            Dictionary with news articles
-        """
+        host, headers = coingecko_config()
+        url = f"{host}/coins/{asset_id}"
         try:
-            # For demo purposes, return mock news
-            # In production, you would use a real news API like CryptoPanic or NewsAPI
-
-            news_templates = [
-                f"{symbol} reaches new milestone as institutional adoption grows",
-                f"Analysts predict bullish trend for {symbol} in coming weeks",
-                f"Major exchange lists {symbol} trading pairs",
-                f"{symbol} network upgrade scheduled for next month",
-                f"Whale activity detected in {symbol} markets",
-            ]
-
-            articles = [
-                {
-                    "title": news_templates[i % len(news_templates)],
-                    "source": "CryptoNews",
-                    "url": f"https://example.com/news/{i}",
-                    "published_at": "2024-01-15",
-                    "sentiment": "neutral",
-                }
-                for i in range(limit)
-            ]
-
-            logger.info(f"Fetched {len(articles)} news articles for {symbol}")
-
-            return {
-                "symbol": symbol.upper(),
-                "article_count": len(articles),
-                "articles": articles,
+            data = request_json(
+                "GET",
+                url,
+                headers=headers,
+                params={
+                    "localization": "false",
+                    "tickers": "false",
+                    "market_data": "true",
+                    "community_data": "false",
+                    "developer_data": "false",
+                },
+            )
+            market = data["market_data"]
+            price = market["current_price"]["usd"]
+            if not finite_number(price) or price <= 0:
+                raise DataQualityError("Missing positive USD price")
+            updated = datetime.fromisoformat(data["last_updated"].replace("Z", "+00:00"))
+            age = (datetime.now(timezone.utc) - updated).total_seconds()
+            if not -300 <= age <= 7200:
+                raise DataQualityError("Price source timestamp is stale (>2h) or in the future")
+            result = {
+                **base,
+                **metadata("live", url, updated_at=data.get("last_updated")),
+                "name": data.get("name", asset_id),
+                "current_price": price,
             }
+            for key in ("market_cap", "total_volume", "high_24h", "low_24h", "ath", "atl"):
+                value = market.get(key, {}).get("usd")
+                result[key] = value if finite_number(value) else None
+            for key in ("price_change_24h", "price_change_percentage_24h", "market_cap_rank"):
+                value = market.get(key)
+                result[key] = value if finite_number(value) else None
+            return result
+        except (
+            requests.RequestException,
+            ValueError,
+            KeyError,
+            TypeError,
+            AttributeError,
+            OverflowError,
+            OSError,
+        ) as exc:
+            return {**base, **metadata("unavailable", url, error=failure_reason(exc))}
 
-        except Exception as e:
-            logger.error(f"Error fetching news for {symbol}: {e}")
-            return {
-                "symbol": symbol.upper(),
-                "article_count": 0,
-                "articles": [],
-            }
+
+class NewsInput(AssetInput):
+    limit: int = Field(default=5, ge=1, le=10, strict=True)
 
 
-class CryptoIndicatorTool(BaseTool):
-    """Tool to calculate technical indicators"""
+class CryptoNewsTool(ResearchTool):
+    name: str = "get_crypto_news"
+    description: str = "Retrieve news evidence via Tavily; missing publication dates stay unknown."
+    parameters: dict = NewsInput.model_json_schema()
+    input_model = NewsInput
 
-    name = "calculate_indicators"
-    description = "Calculate technical indicators (RSI, MACD, etc.) for a cryptocurrency"
+    def _run(self, symbol: str, limit: int = 5) -> dict:
+        result = TavilySearchTool(demo_mode=self.demo_mode).run(
+            query=f"{coin_id(symbol)} {symbol} cryptocurrency", max_results=limit, topic="news"
+        )
+        articles = result.pop("results")
+        return {**result, "symbol": symbol, "article_count": len(articles), "articles": articles}
 
-    def run(self, symbol: str, timeframe: str = "1d") -> Dict[str, Any]:
-        """
-        Calculate technical indicators
 
-        Args:
-            symbol: Cryptocurrency symbol
-            timeframe: Timeframe for calculation (1h, 4h, 1d, etc.)
+class HistoryInput(AssetInput):
+    days: int = Field(default=120, ge=35, le=365, strict=True)
 
-        Returns:
-            Dictionary with technical indicators
-        """
+
+class CryptoHistoryTool(CoinGeckoTool):
+    name: str = "get_crypto_history"
+    description: str = "Get daily CoinGecko USD price samples for real indicator computation."
+    parameters: dict = HistoryInput.model_json_schema()
+    input_model = HistoryInput
+
+    def _run(self, symbol: str, days: int = 120) -> dict:
+        base = {
+            "symbol": symbol,
+            "asset_id": coin_id(symbol),
+            "currency": "usd",
+            "interval": "daily",
+            "days": days,
+            "prices": [],
+            "total_volumes": [],
+        }
+        if self.demo_mode:
+            return {**base, **metadata("unavailable", "demo", error="Demo history is not provided")}
+        host, headers = coingecko_config()
+        url = f"{host}/coins/{coin_id(symbol)}/market_chart"
         try:
-            # For demo purposes, return mock indicators
-            # In production, you would calculate real indicators from historical data
-
-            indicators = {
-                "symbol": symbol.upper(),
-                "timeframe": timeframe,
-                "rsi": 65.5,  # Relative Strength Index
-                "macd": {
-                    "macd_line": 120.5,
-                    "signal_line": 115.2,
-                    "histogram": 5.3,
-                },
-                "moving_averages": {
-                    "ma_7": 50000,
-                    "ma_25": 48000,
-                    "ma_99": 45000,
-                },
-                "bollinger_bands": {
-                    "upper": 52000,
-                    "middle": 50000,
-                    "lower": 48000,
-                },
-                "signals": {
-                    "trend": "bullish",
-                    "strength": "moderate",
-                    "recommendation": "HOLD",
-                },
+            data = request_json(
+                "GET",
+                url,
+                headers=headers,
+                params={"vs_currency": "usd", "days": days, "interval": "daily"},
+            )
+            prices = data["prices"]
+            if not isinstance(prices, list) or len(prices) < 35:
+                raise DataQualityError("Insufficient historical prices")
+            previous = -1
+            for timestamp, value in prices:
+                if (
+                    not finite_number(timestamp)
+                    or timestamp <= previous
+                    or not finite_number(value)
+                    or value <= 0
+                ):
+                    raise DataQualityError("Invalid historical sample")
+                previous = timestamp
+            # CoinGecko appends a current partial-day point; exclude it from daily indicators.
+            if prices[-1][0] - prices[-2][0] < 23 * 3600000:
+                prices = prices[:-1]
+            if len(prices) < 35 or any(
+                not 23 * 3600000 <= b[0] - a[0] <= 25 * 3600000 for a, b in zip(prices, prices[1:])
+            ):
+                raise DataQualityError("History is not a complete daily sample series")
+            updated_at = datetime.fromtimestamp(prices[-1][0] / 1000, timezone.utc)
+            if not -300 <= (datetime.now(timezone.utc) - updated_at).total_seconds() <= 172800:
+                raise DataQualityError(
+                    "Historical source timestamp is stale (>48h) or in the future"
+                )
+            return {
+                **base,
+                **metadata("live", url, updated_at=updated_at.isoformat()),
+                "prices": prices,
+                "total_volumes": data.get("total_volumes", []),
             }
+        except (
+            requests.RequestException,
+            ValueError,
+            KeyError,
+            TypeError,
+            AttributeError,
+            OverflowError,
+            OSError,
+        ) as exc:
+            return {**base, **metadata("unavailable", url, error=failure_reason(exc))}
 
-            logger.info(f"Calculated indicators for {symbol}")
-            return indicators
 
-        except Exception as e:
-            logger.error(f"Error calculating indicators for {symbol}: {e}")
-            return {}
+def calculate_indicators(history: dict) -> dict:
+    """SMA, Wilder RSI(14) and SMA-seeded MACD(12,26,9) over daily samples."""
+    rows = history.get("prices", [])
+    if (
+        history.get("status") != "live"
+        or len(rows) < 35
+        or any(
+            not isinstance(row, (list, tuple))
+            or len(row) != 2
+            or not finite_number(row[1])
+            or row[1] <= 0
+            for row in rows
+        )
+    ):
+        return {
+            **metadata("unavailable", history.get("source", "coingecko")),
+            "error": "At least 35 live daily price samples are required",
+        }
+    prices = [row[1] for row in history["prices"]]
+    changes = [b - a for a, b in zip(prices, prices[1:])]
+    gain = mean(max(c, 0) for c in changes[:14])
+    loss = mean(max(-c, 0) for c in changes[:14])
+    for change in changes[14:]:
+        gain = (gain * 13 + max(change, 0)) / 14
+        loss = (loss * 13 + max(-change, 0)) / 14
+    rsi = 50.0 if gain == loss == 0 else 100.0 if loss == 0 else 100 - 100 / (1 + gain / loss)
+
+    def ema(values, period):
+        average = mean(values[:period])
+        output = [average]
+        for value in values[period:]:
+            average += (value - average) * 2 / (period + 1)
+            output.append(average)
+        return output
+
+    fast, slow = ema(prices, 12), ema(prices, 26)
+    macd = [a - b for a, b in zip(fast[14:], slow)]
+    signal = ema(macd, 9)[-1]
+    return {
+        **metadata("live", history["source"], updated_at=history.get("updated_at")),
+        "method": "daily price samples; Wilder RSI14; SMA-seeded MACD12/26/9",
+        "sample_count": len(prices),
+        "rsi": rsi,
+        "moving_averages": {
+            f"ma_{n}": mean(prices[-n:]) if len(prices) >= n else None for n in (7, 25, 99)
+        },
+        "macd": {"macd_line": macd[-1], "signal_line": signal, "histogram": macd[-1] - signal},
+    }
 
 
-if __name__ == "__main__":
-    # Test tools
-    price_tool = CryptoPriceTool()
-    print("Testing CryptoPriceTool:")
-    print(price_tool.run(symbol="BTC"))
+class IndicatorInput(AssetInput):
+    timeframe: str = Field(default="1d", pattern=r"^1d$")
 
-    news_tool = CryptoNewsTool()
-    print("\nTesting CryptoNewsTool:")
-    print(news_tool.run(symbol="BTC"))
 
-    indicator_tool = CryptoIndicatorTool()
-    print("\nTesting CryptoIndicatorTool:")
-    print(indicator_tool.run(symbol="BTC"))
+class CryptoIndicatorTool(CoinGeckoTool):
+    name: str = "calculate_indicators"
+    description: str = "Calculate daily RSI, MACD and moving averages from real historical samples."
+    parameters: dict = IndicatorInput.model_json_schema()
+    input_model = IndicatorInput
+
+    def _run(self, symbol: str, timeframe: str = "1d") -> dict:
+        history = CryptoHistoryTool(demo_mode=self.demo_mode).run(symbol=symbol)
+        return {"symbol": symbol, "timeframe": timeframe, **calculate_indicators(history)}

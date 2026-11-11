@@ -1,0 +1,8 @@
+{
+  "framework": "React + TypeScript + Vite",
+  "styling": "Plain CSS with custom properties",
+  "existingDesignSystem": null,
+  "existingAppShell": null,
+  "existingFrontend": false,
+  "designSource": "Project brief for the SpoonOS research workbench"
+}

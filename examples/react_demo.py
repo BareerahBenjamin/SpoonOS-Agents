@@ -26,8 +26,9 @@ console = Console()
 def main():
     """Run ReAct Agent demo"""
 
-    console.print(Panel(
-        """
+    console.print(
+        Panel(
+            """
 [bold cyan]🥄 SpoonOS ReAct Agent Demo[/bold cyan]
 
 This demo showcases a ReAct (Reasoning + Acting) Agent that can:
@@ -36,20 +37,21 @@ This demo showcases a ReAct (Reasoning + Acting) Agent that can:
 - Retrieve real-time price data
 - Analyze market trends
 
-The agent will show its thinking process step-by-step.
+The agent uses SpoonOS structured tool calls and preserves source observations.
         """,
-        title="Welcome",
-        border_style="cyan bold"
-    ))
+            title="Welcome",
+            border_style="cyan bold",
+        )
+    )
 
     # Get LLM configuration
     console.print("\n[yellow]Configuration:[/yellow]")
 
     llm_provider = os.getenv("DEFAULT_LLM_PROVIDER", "openai")
-    model_name = os.getenv("DEFAULT_MODEL_NAME", "gpt-4-turbo-preview")
+    model_name = os.getenv("DEFAULT_MODEL_NAME") or None
 
     console.print(f"  LLM Provider: [green]{llm_provider}[/green]")
-    console.print(f"  Model: [green]{model_name}[/green]")
+    console.print(f"  Model: [green]{model_name or 'provider default'}[/green]")
 
     # Check API keys
     if llm_provider == "openai" and not os.getenv("OPENAI_API_KEY"):
@@ -62,10 +64,7 @@ The agent will show its thinking process step-by-step.
 
     try:
         agent = CryptoReActAgent(
-            llm_provider=llm_provider,
-            model_name=model_name,
-            max_iterations=10,
-            verbose=True
+            llm_provider=llm_provider, model_name=model_name, max_iterations=10, verbose=True
         )
         console.print("[green]✓ Agent initialized successfully![/green]\n")
     except Exception as e:
@@ -93,7 +92,7 @@ The agent will show its thinking process step-by-step.
             # Get user question
             question = Prompt.ask(
                 "\n[bold cyan]Your question[/bold cyan]",
-                default="What is the current price of Bitcoin?"
+                default="What is the current price of Bitcoin?",
             )
 
             if question.lower() in ["exit", "quit", "q"]:
@@ -103,13 +102,12 @@ The agent will show its thinking process step-by-step.
             # Run agent
             console.print("\n" + "=" * 80 + "\n")
             result = agent.run(question)
+            console.print(result)
 
             # Ask if user wants to continue
             console.print("\n" + "=" * 80 + "\n")
             continue_prompt = Prompt.ask(
-                "[yellow]Ask another question?[/yellow]",
-                choices=["y", "n"],
-                default="y"
+                "[yellow]Ask another question?[/yellow]", choices=["y", "n"], default="y"
             )
 
             if continue_prompt.lower() == "n":
@@ -130,18 +128,20 @@ The agent will show its thinking process step-by-step.
 def run_batch_demo():
     """Run batch demo with predefined questions"""
 
-    console.print(Panel(
-        "[bold cyan]Running Batch Demo[/bold cyan]\n"
-        "Testing multiple questions automatically...",
-        border_style="cyan"
-    ))
+    console.print(
+        Panel(
+            "[bold cyan]Running Batch Demo[/bold cyan]\n"
+            "Testing multiple questions automatically...",
+            border_style="cyan",
+        )
+    )
 
     # Initialize agent
     agent = CryptoReActAgent(
         llm_provider=os.getenv("DEFAULT_LLM_PROVIDER", "openai"),
-        model_name=os.getenv("DEFAULT_MODEL_NAME", "gpt-4-turbo-preview"),
+        model_name=os.getenv("DEFAULT_MODEL_NAME") or None,
         max_iterations=10,
-        verbose=True
+        verbose=True,
     )
 
     # Test questions
@@ -157,6 +157,7 @@ def run_batch_demo():
         console.print(f"{'=' * 80}\n")
 
         result = agent.run(question)
+        console.print(result)
         agent.reset()
 
     console.print(f"\n\n{'=' * 80}")
@@ -169,9 +170,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="ReAct Agent Demo")
     parser.add_argument(
-        "--batch",
-        action="store_true",
-        help="Run batch demo with predefined questions"
+        "--batch", action="store_true", help="Run batch demo with predefined questions"
     )
 
     args = parser.parse_args()

@@ -1,54 +1,50 @@
 [project]
 name = "spoon-agent-showcase"
-version = "0.1.0"
+version = "0.2.0"
 description = "SpoonOS Agent Showcase - ReAct and Graph Agent implementations"
-authors = [
-    {name = "Your Name", email = "your.email@example.com"}
-]
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.14"
 license = {text = "Apache-2.0"}
 
 dependencies = [
-    "spoon-core>=0.1.0",
-    "langgraph>=0.2.0",
-    "langchain>=0.3.0",
-    "openai>=1.0.0",
-    "anthropic>=0.34.0",
+    "spoon-ai-sdk==0.4.10",
+    # SpoonOS imports WSTransport, removed in later FastMCP releases.
+    "fastmcp==2.12.5",
+    "mcp==1.16.0",
+    "langgraph>=1.0,<2",
     "requests>=2.31.0",
     "python-dotenv>=1.0.0",
     "loguru>=0.7.0",
-    "pydantic>=2.0.0",
+    # MCP 1.16 uses a typing helper removed in newer Pydantic releases.
+    "pydantic>=2.10.4,<2.12",
     "rich>=13.0.0",
 ]
 
 [project.optional-dependencies]
-web3 = [
-    "web3>=6.0.0",
-    "eth-account>=0.13.0",
-]
-memory = [
-    "mem0ai>=0.1.0",
+api = [
+    "fastapi>=0.115,<1",
+    "uvicorn>=0.32,<1",
 ]
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
     "black>=24.0.0",
     "ruff>=0.4.0",
+    "httpx>=0.28",
 ]
 
 [project.urls]
-Homepage = "https://github.com/your-username/spoon-agent-showcase"
-Documentation = "https://github.com/your-username/spoon-agent-showcase#readme"
-Repository = "https://github.com/your-username/spoon-agent-showcase"
-Issues = "https://github.com/your-username/spoon-agent-showcase/issues"
+Homepage = "https://github.com/BareerahBenjamin/SpoonOS-Agents"
+Documentation = "https://github.com/BareerahBenjamin/SpoonOS-Agents#readme"
+Repository = "https://github.com/BareerahBenjamin/SpoonOS-Agents"
+Issues = "https://github.com/BareerahBenjamin/SpoonOS-Agents/issues"
 
 [build-system]
 requires = ["setuptools>=68.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["agents", "tools", "skills"]
+packages = ["agents", "tools", "service"]
 
 [tool.black]
 line-length = 100
@@ -57,6 +53,9 @@ target-version = ['py312']
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

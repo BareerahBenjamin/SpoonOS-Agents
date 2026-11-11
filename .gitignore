@@ -124,3 +124,7 @@ credentials.json
 Thumbs.db
 ehthumbs.db
 Desktop.ini
+
+# Frontend
+node_modules/
+*.tsbuildinfo

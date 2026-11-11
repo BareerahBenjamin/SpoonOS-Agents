@@ -1,572 +1,76 @@
-# 🚀 部署指南
+# 本地运行与部署
 
-本指南介绍如何将 SpoonOS Agent Showcase 部署到各种环境。
+工作台由一个 FastAPI 进程提供 React 静态页面、API 和 SSE，研究报告与运行事件写入 SQLite。
 
-## 📋 目录
-
-- [本地开发环境](#本地开发环境)
-- [Docker 部署](#docker-部署)
-- [云平台部署](#云平台部署)
-- [API 服务化](#api-服务化)
-- [监控和日志](#监控和日志)
-
-## 本地开发环境
-
-### 系统要求
-
-- Python 3.12+
-- 4GB+ RAM
-- 网络连接（访问 LLM API）
-
-### 快速部署
+## Docker Compose
 
 ```bash
-# 1. 克隆项目
-git clone https://github.com/your-username/spoon-agent-showcase.git
-cd spoon-agent-showcase
-
-# 2. 创建虚拟环境
-python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# venv\Scripts\activate  # Windows
-
-# 3. 安装依赖
-pip install -r requirements.txt
-
-# 4. 配置环境变量
-cp .env.example .env
-# 编辑 .env 文件，添加 API Keys
-
-# 5. 运行演示
-python examples/react_demo.py
+docker compose up --build -d
+docker compose ps
 ```
 
-## Docker 部署
+打开 [研究工作台](http://127.0.0.1:8000/)。构建使用 `frontend/package-lock.json` 和 `uv.lock`，运行容器以非 root 用户启动。Compose 将服务端口绑定到本机回环地址。若 8000 已被占用，运行 `SPOONOS_PORT=8080 docker compose up --build -d`，然后访问 [127.0.0.1:8080](http://127.0.0.1:8080/)。
 
-### Dockerfile
+未提供 `.env` 时，容器使用无需密钥的演示模式。真实研究使用 `.env` 中的配置。修改配置后运行 `docker compose up -d`，Compose 会重新创建配置变化的容器。
 
-创建 `Dockerfile`:
-
-```dockerfile
-FROM python:3.12-slim
-
-WORKDIR /app
-
-# 安装系统依赖
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
-
-# 复制依赖文件
-COPY requirements.txt .
-
-# 安装 Python 依赖
-RUN pip install --no-cache-dir -r requirements.txt
-
-# 复制项目文件
-COPY . .
-
-# 设置环境变量
-ENV PYTHONUNBUFFERED=1
-
-# 暴露端口（如果运行 API 服务）
-EXPOSE 8000
-
-# 默认命令
-CMD ["python", "examples/react_demo.py"]
-```
-
-### docker-compose.yml
-
-```yaml
-version: '3.8'
-
-services:
-  spoon-agent:
-    build: .
-    container_name: spoon-agent-showcase
-    environment:
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - DEFAULT_LLM_PROVIDER=${DEFAULT_LLM_PROVIDER}
-    volumes:
-      - ./logs:/app/logs
-    restart: unless-stopped
-```
-
-### 构建和运行
+报告与运行事件保存在 `research-data` 命名卷的 `/data/research.sqlite3`。`docker compose down` 会保留该卷。备份前停止服务，复制数据库后再启动。
 
 ```bash
-# 构建镜像
-docker build -t spoon-agent-showcase .
-
-# 运行容器
-docker run -it --env-file .env spoon-agent-showcase
-
-# 使用 docker-compose
-docker-compose up -d
+docker compose stop workbench
+docker compose cp workbench:/data/research.sqlite3 ./research-backup.sqlite3
+docker compose start workbench
 ```
 
-## 云平台部署
-
-### AWS Lambda
-
-#### 1. 准备部署包
+## 从源码运行
 
 ```bash
-# 安装依赖到目录
-pip install -r requirements.txt -t ./package
-
-# 打包代码
-cd package
-zip -r ../deployment.zip .
-cd ..
-zip -g deployment.zip agents/ tools/ examples/
+uv sync --locked --extra api
+npm --prefix frontend ci
+npm --prefix frontend run build
+DEMO_MODE=true uv run --locked --extra api uvicorn service.app:create_app --factory --host 127.0.0.1 --port 8000
 ```
 
-#### 2. 创建 Lambda 函数
+FastAPI 在启动时检测 `frontend/dist`。如果先启动了后端，完成首次前端构建后重启后端。`/docs` 提供接口文档，`/health` 检查进程存活并返回 SDK 版本。运行 `npm --prefix frontend run dev` 可在 Vite 中开发，API 和 SSE 会转发到后端的 8000 端口。
 
-使用 AWS CLI:
+## 配置真实数据与模型
+
+将 `.env.example` 复制为 `.env`，设置 `DEFAULT_LLM_PROVIDER` 和对应供应商的 API 密钥，保持 `DEMO_MODE=false`。从源码运行时去掉启动命令前的 `DEMO_MODE=true`。设置 `TAVILY_API_KEY` 可启用新闻和搜索。`COINGECKO_PLAN=demo` 对应可无密钥访问的公共 API。使用 Pro API 时需设置 `COINGECKO_PLAN=pro` 和 `COINGECKO_API_KEY`。
+
+`.env` 在容器运行时注入，构建镜像时不会复制该文件。API 设置页只显示密钥的配置状态。网络代理可用标准的 `HTTP_PROXY` 和 `HTTPS_PROXY` 环境变量。
+
+## 接口行为
+
+`POST /research` 等待 LangGraph 运行，并在报告落库后返回 HTTP 201。正文的 `status` 表示数据和报告是否可用。新闻、历史和行情并行采集，模型由 SpoonOS 异步调用。
+
+模型生成/输出校验失败返回已保存的 `failed` 研究结果；关键行情缺失返回 `unavailable`。无模型配置或非法配置返回 503，参数非法返回 422，报告不存在返回 404，无法解释未生成报告的任务返回 409，追问生成或引用验证失败返回 502。
+
+`LLM_TIMEOUT_SECONDS` 限制一次模型生成或快速问答的总等待时间。行情/新闻每次 HTTP 请求有连接与读取超时，暂时性错误最多重试一次。通知默认关闭，启用时只发控制台。不会在 API 请求中触发 Slack/Discord/邮件投递。
+
+## 保存与追问
+
+源码运行时，`RESEARCH_DB_PATH` 默认为 `outputs/research.sqlite3`。每条记录包含完整报告、快照 ID、数据来源与时间、引用和节点事件。已保存的快照只读，数据库应按私有数据保存。
+
+`GET /research` 查看历史，`GET /research/{run_id}` 取回同一份数据；`POST /research/{run_id}/questions` 只把已保存快照提供给模型。要使用最新行情，创建新的研究任务。
+
+## 后台运行与 SSE
+
+`POST /research/runs` 返回 `202` 和任务 ID。后台每次执行一项完整研究，最多再排队八项；队列满时返回 `429`。工作台从 `GET /research/runs/{run_id}/events` 订阅运行状态（`run`）、节点开始或结束（`node`），以及最终状态（`terminal`）。这些事件来自实际节点执行，报告中原有的 `events` 字段仍保留已结束节点的汇总。
+
+SSE 用每个任务单独的递增整数 `id` 排序。客户端重连时传 `Last-Event-ID`，或首次连接时用 `?after=<id>`，服务只返回更大的事件 ID。空闲连接每 15 秒收到注释心跳；报告与终态在同一事务写入，收到成功终态即可读取报告。启用反向代理时，为 SSE 路由关闭响应缓冲和压缩，并让读取超时大于心跳间隔。
+
+请让同一数据库只由一个应用进程执行任务（保持 Uvicorn 默认的 `--workers 1`）。断开页面不会取消后台研究。任务状态和已发事件存入 SQLite；应用重启会把尚未结束的运行标记为 `interrupted`，不会自动重试可能已收费的模型请求。
+
+## 验证
 
 ```bash
-aws lambda create-function \
-  --function-name spoon-agent-showcase \
-  --runtime python3.12 \
-  --role arn:aws:iam::YOUR_ACCOUNT:role/lambda-execution-role \
-  --handler lambda_handler.handler \
-  --zip-file fileb://deployment.zip \
-  --timeout 300 \
-  --memory-size 1024
+uv run --locked --extra api --extra dev pytest -q
+uv run --locked --extra api --extra dev ruff check agents tools service tests examples
+npm --prefix frontend run build
+docker compose config --quiet
 ```
 
-#### 3. Lambda Handler
+默认测试不读取真实密钥或请求真实模型。外部服务的可用性与供应商账户的模型权限，需要配置真实密钥后实际运行确认。`DEMO_MODE=true` 可无模型密钥演示 Graph 数据状态，但不会生成投资结论。
 
-创建 `lambda_handler.py`:
+## 多人或公网部署前的必要扩展
 
-```python
-import json
-from agents.react_agent import CryptoReActAgent
-
-
-def handler(event, context):
-    """Lambda handler for ReAct Agent"""
-
-    # 解析请求
-    body = json.loads(event.get('body', '{}'))
-    question = body.get('question', '')
-
-    # 初始化 Agent
-    agent = CryptoReActAgent(
-        llm_provider="openai",
-        model_name="gpt-4-turbo-preview",
-        verbose=False
-    )
-
-    # 运行 Agent
-    result = agent.run(question)
-
-    # 返回响应
-    return {
-        'statusCode': 200,
-        'body': json.dumps({
-            'answer': result,
-            'question': question
-        })
-    }
-```
-
-### Google Cloud Run
-
-#### 1. 创建 Dockerfile
-
-使用上面的 Dockerfile。
-
-#### 2. 构建并推送镜像
-
-```bash
-# 构建镜像
-gcloud builds submit --tag gcr.io/YOUR_PROJECT/spoon-agent-showcase
-
-# 部署到 Cloud Run
-gcloud run deploy spoon-agent-showcase \
-  --image gcr.io/YOUR_PROJECT/spoon-agent-showcase \
-  --platform managed \
-  --region us-central1 \
-  --allow-unauthenticated \
-  --set-env-vars OPENAI_API_KEY=your-key
-```
-
-### Heroku
-
-#### 1. 创建 Procfile
-
-```
-web: python api_server.py
-```
-
-#### 2. 部署
-
-```bash
-# 登录 Heroku
-heroku login
-
-# 创建应用
-heroku create spoon-agent-showcase
-
-# 设置环境变量
-heroku config:set OPENAI_API_KEY=your-key
-
-# 推送代码
-git push heroku main
-```
-
-### Railway
-
-#### 1. 连接 GitHub 仓库
-
-在 Railway 上连接你的 GitHub 仓库。
-
-#### 2. 配置环境变量
-
-在 Railway 仪表板中添加：
-- `OPENAI_API_KEY`
-- `DEFAULT_LLM_PROVIDER`
-- `DEFAULT_MODEL_NAME`
-
-#### 3. 自动部署
-
-Railway 会自动检测 Python 项目并部署。
-
-## API 服务化
-
-### 创建 FastAPI 服务
-
-创建 `api_server.py`:
-
-```python
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from agents.react_agent import CryptoReActAgent
-from agents.graph_agent import CryptoAnalysisGraph
-
-app = FastAPI(title="SpoonOS Agent API")
-
-
-class QuestionRequest(BaseModel):
-    question: str
-    agent_type: str = "react"
-
-
-class AnalysisRequest(BaseModel):
-    symbol: str
-
-
-@app.post("/api/ask")
-async def ask_question(request: QuestionRequest):
-    """Ask a question to the ReAct Agent"""
-    try:
-        agent = CryptoReActAgent(verbose=False)
-        result = agent.run(request.question)
-        return {"answer": result}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/analyze")
-async def analyze_crypto(request: AnalysisRequest):
-    """Analyze a cryptocurrency"""
-    try:
-        agent = CryptoAnalysisGraph(verbose=False)
-        result = agent.run(symbol=request.symbol)
-        return {
-            "symbol": result.symbol,
-            "recommendation": result.recommendation,
-            "confidence": result.confidence,
-            "reasoning": result.reasoning,
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/health")
-async def health_check():
-    """Health check endpoint"""
-    return {"status": "healthy"}
-
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
-```
-
-### 运行 API 服务
-
-```bash
-# 安装 FastAPI 和 Uvicorn
-pip install fastapi uvicorn
-
-# 运行服务
-python api_server.py
-
-# 或使用 Uvicorn
-uvicorn api_server:app --host 0.0.0.0 --port 8000 --reload
-```
-
-### 测试 API
-
-```bash
-# 健康检查
-curl http://localhost:8000/health
-
-# 提问
-curl -X POST http://localhost:8000/api/ask \
-  -H "Content-Type: application/json" \
-  -d '{"question": "What is the price of Bitcoin?"}'
-
-# 分析
-curl -X POST http://localhost:8000/api/analyze \
-  -H "Content-Type: application/json" \
-  -d '{"symbol": "BTC"}'
-```
-
-## 监控和日志
-
-### 日志配置
-
-使用 Loguru 配置日志：
-
-```python
-from loguru import logger
-
-# 配置日志
-logger.add(
-    "logs/agent_{time}.log",
-    rotation="500 MB",
-    retention="10 days",
-    level="INFO"
-)
-```
-
-### 性能监控
-
-#### 1. 使用 Prometheus
-
-```python
-from prometheus_client import Counter, Histogram, start_http_server
-
-# 定义指标
-requests_total = Counter('agent_requests_total', 'Total requests')
-request_duration = Histogram('agent_request_duration_seconds', 'Request duration')
-
-# 在代码中使用
-requests_total.inc()
-with request_duration.time():
-    result = agent.run(question)
-```
-
-#### 2. 使用 Sentry
-
-```python
-import sentry_sdk
-
-sentry_sdk.init(
-    dsn="your-sentry-dsn",
-    traces_sample_rate=1.0,
-)
-```
-
-### 错误追踪
-
-```python
-import traceback
-
-try:
-    result = agent.run(question)
-except Exception as e:
-    logger.error(f"Error: {e}")
-    logger.error(traceback.format_exc())
-    # 发送告警
-```
-
-## 生产环境最佳实践
-
-### 1. 安全性
-
-- **API Keys**: 使用环境变量或密钥管理服务
-- **HTTPS**: 强制使用 HTTPS
-- **认证**: 添加 API 认证（JWT、API Key）
-- **限流**: 实现请求限流
-
-```python
-from slowapi import Limiter
-from slowapi.util import get_remote_address
-
-limiter = Limiter(key_func=get_remote_address)
-
-@app.post("/api/ask")
-@limiter.limit("10/minute")
-async def ask_question(request: Request):
-    pass
-```
-
-### 2. 性能优化
-
-- **缓存**: 缓存常见查询结果
-- **异步**: 使用异步 I/O
-- **连接池**: 复用 HTTP 连接
-- **提示词缓存**: 使用 Anthropic 提示词缓存
-
-```python
-from functools import lru_cache
-
-@lru_cache(maxsize=100)
-def get_crypto_price(symbol: str):
-    # 缓存价格查询
-    pass
-```
-
-### 3. 可靠性
-
-- **重试机制**: 自动重试失败请求
-- **超时控制**: 设置合理超时
-- **熔断器**: 防止级联失败
-- **健康检查**: 定期健康检查
-
-```python
-import tenacity
-
-@tenacity.retry(
-    stop=tenacity.stop_after_attempt(3),
-    wait=tenacity.wait_exponential(multiplier=1, min=4, max=10)
-)
-def call_llm_with_retry():
-    pass
-```
-
-### 4. 可观测性
-
-- **日志**: 结构化日志
-- **指标**: 关键业务指标
-- **追踪**: 分布式追踪
-- **告警**: 异常告警
-
-## 扩展部署
-
-### 水平扩展
-
-使用 Kubernetes:
-
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: spoon-agent
-spec:
-  replicas: 3
-  selector:
-    matchLabels:
-      app: spoon-agent
-  template:
-    metadata:
-      labels:
-        app: spoon-agent
-    spec:
-      containers:
-      - name: spoon-agent
-        image: spoon-agent-showcase:latest
-        env:
-        - name: OPENAI_API_KEY
-          valueFrom:
-            secretKeyRef:
-              name: api-keys
-              key: openai
-```
-
-### 负载均衡
-
-使用 Nginx:
-
-```nginx
-upstream spoon_agent {
-    server 127.0.0.1:8000;
-    server 127.0.0.1:8001;
-    server 127.0.0.1:8002;
-}
-
-server {
-    listen 80;
-    server_name api.example.com;
-
-    location / {
-        proxy_pass http://spoon_agent;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-    }
-}
-```
-
-## 环境变量清单
-
-生产环境必需的环境变量：
-
-```bash
-# LLM Provider
-OPENAI_API_KEY=required
-DEFAULT_LLM_PROVIDER=openai
-DEFAULT_MODEL_NAME=gpt-4-turbo-preview
-
-# Tools
-TAVILY_API_KEY=optional
-COINGECKO_API_KEY=optional
-
-# Application
-LOG_LEVEL=INFO
-MAX_ITERATIONS=10
-ENABLE_STREAMING=false
-
-# API (如果部署 API)
-API_HOST=0.0.0.0
-API_PORT=8000
-CORS_ORIGINS=*
-
-# Monitoring
-SENTRY_DSN=optional
-PROMETHEUS_PORT=9090
-```
-
-## 故障排除
-
-### 常见问题
-
-1. **内存不足**
-   - 增加容器内存限制
-   - 使用更小的模型
-   - 实现结果缓存
-
-2. **API 超时**
-   - 增加超时时间
-   - 使用更快的模型
-   - 实现异步处理
-
-3. **并发问题**
-   - 使用异步框架
-   - 增加工作进程数
-   - 实现请求队列
-
-## 总结
-
-选择合适的部署方式：
-
-- **开发**: 本地环境
-- **原型**: Docker
-- **小型应用**: Heroku/Railway
-- **中型应用**: AWS Lambda/Cloud Run
-- **大型应用**: Kubernetes
-
-记住：
-- ✅ 始终使用环境变量管理敏感信息
-- ✅ 实现完善的日志和监控
-- ✅ 定期备份数据
-- ✅ 进行性能测试
-
-祝部署顺利！🚀
+当前没有用户鉴权与任务归属隔离，请仅监听本机回环地址。多人版本需增加认证、任务归属检查、请求与费用限额，以及支持多进程的任务队列和数据库。

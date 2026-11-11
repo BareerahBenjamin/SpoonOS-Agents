@@ -1,309 +1,136 @@
-# 🥄 SpoonOS Agent Showcase
+# SpoonOS Crypto Research
 
-一个使用 SpoonOS 框架实现的智能加密货币分析助手，展示 ReAct Agent 和 Graph Agent 的强大能力。
+基于 SpoonOS SDK 的只读加密资产研究工作台。选择资产后，可以实时查看研究进度，核对行情、指标和证据，并基于已保存的快照追问。
 
-## 🌟 项目特点
+![SpoonOS 研究工作台首页，采用瑞士季刊排版，左侧为研究表单，右侧为黑白建筑封面](docs/workbench.jpg)
 
-- **ReAct Agent**: 基于推理-行动模式的智能问答系统
-- **Graph Agent**: 状态图驱动的复杂工作流编排
-- **多模型支持**: OpenAI、Anthropic、DeepSeek 等
-- **Web3 集成**: 区块链数据查询和交互
-- **工具生态**: 集成搜索、数据分析、通知等多种工具
+## 快速启动
 
-## 🏗️ 项目架构
+需要 Python 3.12、[uv](https://docs.astral.sh/uv/) 和 Node.js 22.12+（也支持 Node.js 20.19+ 的 20.x 版本）。在仓库根目录运行：
 
-```
-spoon-agent-showcase/
-├── agents/
-│   ├── react_agent.py      # ReAct Agent 实现
-│   └── graph_agent.py      # Graph Agent 实现
-├── tools/
-│   ├── crypto_tools.py     # 加密货币工具
-│   ├── search_tools.py     # 搜索工具
-│   └── notification_tools.py # 通知工具
-├── skills/
-│   └── crypto_analysis/    # 自定义 Skill
-├── examples/
-│   ├── react_demo.py       # ReAct Agent 演示
-│   └── graph_demo.py       # Graph Agent 演示
-├── tests/
-│   ├── test_react_agent.py
-│   └── test_graph_agent.py
-├── .env.example
-├── requirements.txt
-├── pyproject.toml
-└── README.md
-```
-
-## 🚀 快速开始
-
-### 1. 环境准备
-
-**系统要求**:
-- Python 3.12+
-- pip 或 uv 包管理器
-
-**克隆项目**:
 ```bash
-git clone https://github.com/your-username/spoon-agent-showcase.git
-cd spoon-agent-showcase
+uv sync --locked --extra api
+npm --prefix frontend ci
+npm --prefix frontend run build
+DEMO_MODE=true uv run --locked --extra api uvicorn service.app:create_app --factory --host 127.0.0.1 --port 8000
 ```
 
-### 2. 安装依赖
+打开 [研究工作台](http://127.0.0.1:8000/)，选择 BTC 后点击「开始研究」。演示模式无需 API 密钥，使用固定示例行情，不请求外部数据源或模型。
 
-使用 pip:
+也可直接通过 Docker Compose 启动，镜像会根据锁文件构建前端并安装 Python 依赖。
+
 ```bash
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
-pip install -r requirements.txt
+docker compose up --build -d
 ```
 
-或使用 uv (更快):
-```bash
-uv venv
-source .venv/bin/activate
-uv pip install -r requirements.txt
-```
+容器默认监听本机 8000 端口。未提供 `.env` 时使用演示模式。数据库存放在 `research-data` 卷。配置真实数据、变更端口和备份方式见 [部署说明](DEPLOYMENT.md)。
 
-### 3. 配置环境变量
+## 实际接入的能力
 
-复制环境变量模板：
+| 模块 | 实现与职责 |
+|---|---|
+| 快速问答 | `spoon_ai.agents.toolcall.ToolCallAgent` 执行 ReAct 循环，以结构化 function calls 调用工具 |
+| 模型入口 | `spoon_ai.chat.ChatBot` 统一接入 OpenAI、Anthropic、DeepSeek、Gemini |
+| 工具协议 | 行情、历史行情、新闻、指标、搜索均继承 `spoon_ai.tools.base.BaseTool`，由 `ToolManager` 注册 |
+| 完整研究 | LangGraph 并行采集行情/历史/新闻，再计算指标、检查质量、用 SpoonOS 生成报告 |
+| 数据来源 | CoinGecko USD 行情及每日价格采样；Tavily 新闻与网页检索 |
+| 可追溯性 | Pydantic 校验报告与引用 ID；分别保存模型结论和 24h 涨跌幅规则信号 |
+| 本地工作台 | React/TypeScript 前端查看行情、趋势、指标、证据、研究记录和服务配置 |
+| 本地服务 | FastAPI 提供研究、问答和可重连的 SSE；SQLite 保存报告、数据快照和运行事件 |
+
+项目锁定 **`spoon-ai-sdk==0.4.10`**，Python 导入名为 `spoon_ai`。相关接口见 [SpoonOS 源码](https://github.com/XSpoonAi/spoon-core)、[工具协议](https://github.com/XSpoonAi/spoon-core/blob/main/spoon_ai/tools/base.py)和 [ToolCallAgent](https://github.com/XSpoonAi/spoon-core/blob/main/spoon_ai/agents/toolcall.py)。
+
+## 真实研究
+
 ```bash
 cp .env.example .env
 ```
 
-编辑 `.env` 文件，添加你的 API 密钥：
+设置 `DEFAULT_LLM_PROVIDER` 并填入对应密钥。`DEFAULT_MODEL_NAME` 可留空。若需要新闻和网页检索，配置 `TAVILY_API_KEY`。CoinGecko 公共接口可无密钥运行。用上述本地命令启动时去掉 `DEMO_MODE=true`，或执行 `docker compose up -d` 让容器读取 `.env`。如果之前在工作台设置中手动选了「演示模式」，切换到「真实研究」或「跟随服务端」。
+
+`requirements.txt` 仅引用 `pyproject.toml`；兼容 pip 的安装方式为 `python -m pip install -r requirements.txt`。要复现已验证的依赖组合，使用 `uv.lock`。SpoonOS 的依赖范围较宽，本项目固定了兼容的 FastMCP/MCP 并限制 Pydantic 版本，避免 SDK 导入失败。SDK 本身仍会安装一部分未使用的 Web3 依赖。
+
+## Python 调用
+
+```python
+from dotenv import load_dotenv
+from agents import CryptoAnalysisGraph, CryptoReActAgent
+
+load_dotenv()
+answer = CryptoReActAgent().run("BTC 当前价格是多少？请注明来源和时间。")
+print(answer)
+
+report = CryptoAnalysisGraph().run(symbol="BTC")
+print(report.model_dump_json(indent=2))
+```
+
+异步服务或 notebook 中使用 `await agent.arun(...)`，同步 `run()` 会明确拒绝嵌套事件循环。每次问答创建独立 SpoonOS Agent 状态；`history` 保留 SDK 消息和工具调用记录，`reset()` 清除引用。工具同时提供 `run(**kwargs)` 和 SpoonOS 的 `await execute(**kwargs)`；同步 HTTP 在线程中执行。
+
+模型运行时使用独立的 SpoonOS provider registry 与 manager，结束时关闭客户端，并逐请求传递选定模型名；这补齐了 SDK 0.4.10 默认共享实例、部分调用未转发模型名的行为，防止不同研究串用模型或跨事件循环复用连接。
+
+兼容的交互式示例：
+
 ```bash
-# LLM Provider
-OPENAI_API_KEY=your_openai_key
-ANTHROPIC_API_KEY=your_anthropic_key
-DEEPSEEK_API_KEY=your_deepseek_key
-
-# Tools
-TAVILY_API_KEY=your_tavily_key
-COINGECKO_API_KEY=your_coingecko_key
-
-# Optional: Web3
-WEB3_RPC_URL=your_rpc_url
+uv run python examples/react_demo.py
+uv run python examples/graph_demo.py
 ```
 
-### 4. 运行演示
+## API 与 SSE
 
-**ReAct Agent 演示**:
+交互接口文档见 [FastAPI Swagger UI](http://127.0.0.1:8000/docs)。用以下命令创建演示任务并读取 SSE 事件。
+
 ```bash
-python examples/react_demo.py
+curl -X POST http://127.0.0.1:8000/research/runs \
+  -H 'Content-Type: application/json' -d '{"symbol":"BTC","demo_mode":true}'
+# 把 <run_id> 换成上一步响应中的 run_id
+curl -N 'http://127.0.0.1:8000/research/runs/<run_id>/events'
 ```
 
-**Graph Agent 演示**:
+| 接口 | 用途 |
+|---|---|
+| `GET /health` | SDK 版本与服务存活检查；不代表外部连接可用 |
+| `GET /settings` | 返回配置状态和默认研究模式；不返回密钥 |
+| `POST /questions` | `{"question":"..."}`，SpoonOS 实时工具问答 |
+| `POST /research` | 兼容接口：等待完整研究后返回已保存快照 |
+| `POST /research/runs` | `202`，排队研究并返回 `run_id`；`demo_mode` 可选 |
+| `GET /research/runs/{run_id}` | 读取排队、运行和终态 |
+| `GET /research/runs/{run_id}/events` | SSE：`run`、`node`、`terminal`，支持事件续传 |
+| `GET /research?limit=20&offset=0` | 分页读取已保存记录，可按 `symbol` 或 `status` 筛选 |
+| `GET /research/{run_id}` | 读取原始报告、数据、证据和节点事件 |
+| `POST /research/{run_id}/questions` | 针对原快照提问；不获取新行情 |
+
+本地数据库默认位于 `outputs/research.sqlite3`，可用 `RESEARCH_DB_PATH` 修改。每次研究创建新的 `run_id` 和 `snapshot_id`。直接调用 Python Agent 时，如需持久化可使用 `service.store.ReportStore.save(report)`。
+
+## 数据与结果契约
+
+工具输出带 `status / source / fetched_at / updated_at / error`。当前实现的状态是 `live / mock / unavailable`，**没有缓存回退**。演示模式通过 `DEMO_MODE=true` 或工作台设置启用；使用固定演示行情与新闻，不伪造历史，不调用模型，也不生成投资方向。快速问答使用服务端配置，仍需要模型密钥。
+
+完整研究遵守以下规则：
+
+- 行情必须是有效正数且来源时间在最近 2 小时内；关键行情缺失时不生成模型结论。
+- 采集暂时性网络错误、HTTP 429/5xx 最多重试一次；失败显示真实原因，不替换成固定价格。
+- 新闻来源去重，保留链接和摘录；缺失的发布时间保持未知，并列入数据限制。不生成固定“Neutral”情绪分数。
+- 每日历史采样须连续，至少 35 个有效样本，且最近采样距今不超过 48 小时。末尾不足一天的采样不参与指标计算。
+- 指标为 Wilder RSI(14)、SMA(7/25/99)、SMA 初始化的 MACD(12/26/9)。不足 99 个样本时 `ma_99=null`。这些是每日价格采样指标，不是交易所 OHLC/K 线指标。
+- JSON 格式、推荐枚举或引用 ID 校验失败时，`recommendation=null`，任务标记 `failed`。引用校验能检查 ID 是否存在，不能证明模型每一句解释都正确。
+- `rule_signal` 只是 24h 涨跌幅阈值规则，`recommendation` 来自已校验的模型报告；二者分歧通过 `disagreement` 暴露。废弃字段 `confidence` 固定为 `null`，不再展示 75%。
+
+报告状态：`completed`（所需数据齐全）、`partial`（有行情但存在证据缺口）、`unavailable`（关键行情缺失）、`failed`（报告失败）、`demo`（演示）。`limitations`、`evidence`、`data` 和带序号的 `events` 与报告一起保存。通知仅在显式 `notify=True` 时写控制台，失败不会重跑分析；模型没有交易、邮件或外部消息工具。
+
+## 验证
+
+前端开发可运行 `npm --prefix frontend run dev`。Vite 会将 API 和 SSE 转发到本机 8000 端口。开发页面在 [127.0.0.1:5173](http://127.0.0.1:5173/)。
+
 ```bash
-python examples/graph_demo.py
+uv run --locked --extra api --extra dev pytest -q
+uv run --locked --extra api --extra dev ruff check agents tools service tests examples
+npm --prefix frontend run build
 ```
 
-## 📚 使用示例
+默认测试不访问外部 HTTP、不产生模型费用。集成测试保留真实 SpoonOS `ChatBot → ToolCallAgent → ToolManager → BaseTool`，只替换外部推理边界。覆盖缺失数据、错误输出、未知引用、模型/规则分歧、指标计算、配置错误、持久化和快照追问。
 
-### ReAct Agent - 智能问答
+## 当前边界
 
-```python
-from agents.react_agent import CryptoReActAgent
+工作台面向本机单用户。关闭页面或断开 SSE 不会取消研究；刷新运行页面会重新读取状态和已有事件。进程重启后，未完成任务标记为中断，需要手动重新发起。当前不支持任务取消、图检查点、跨运行缓存、订阅和多人鉴权。公开部署需要补鉴权、限流和预算控制，见 [部署说明](DEPLOYMENT.md)。没有钱包或交易能力。
 
-# 初始化 Agent
-agent = CryptoReActAgent(
-    llm_provider="openai",
-    model_name="gpt-4"
-)
-
-# 提问
-response = agent.run(
-    "比特币当前价格是多少？最近24小时涨跌幅如何？"
-)
-
-print(response)
-```
-
-**工作流程**:
-1. **Thought**: Agent 分析问题，决定需要查询价格数据
-2. **Action**: 调用 `get_crypto_price` 工具
-3. **Observation**: 获取价格数据
-4. **Thought**: 分析数据，准备回答
-5. **Answer**: 生成最终答案
-
-### Graph Agent - 工作流编排
-
-```python
-from agents.graph_agent import CryptoAnalysisGraph
-
-# 初始化 Graph Agent
-graph = CryptoAnalysisGraph()
-
-# 运行工作流
-result = graph.run({
-    "symbol": "BTC",
-    "action": "analyze"
-})
-
-print(result)
-```
-
-**工作流节点**:
-1. **数据收集**: 获取价格、交易量、市值
-2. **技术分析**: 计算指标（RSI、MACD、MA）
-3. **情绪分析**: 分析社交媒体和新闻
-4. **决策生成**: 综合分析生成建议
-5. **通知发送**: 发送分析报告
-
-## 🛠️ 核心组件
-
-### 1. ReAct Agent
-
-ReAct（Reasoning + Acting）模式结合了推理和行动：
-
-```python
-class ReActAgent:
-    def __init__(self, llm, tools):
-        self.llm = llm
-        self.tools = tools
-
-    def run(self, query):
-        while not self.is_finished():
-            # Reasoning
-            thought = self.llm.generate_thought(query, self.history)
-
-            # Acting
-            if self.should_use_tool(thought):
-                action = self.select_action(thought)
-                observation = self.execute_tool(action)
-                self.history.append({
-                    "thought": thought,
-                    "action": action,
-                    "observation": observation
-                })
-            else:
-                return self.generate_answer(thought)
-```
-
-### 2. Graph Agent
-
-基于状态图的工作流编排：
-
-```python
-from langgraph.graph import StateGraph
-
-class GraphAgent:
-    def __init__(self):
-        self.graph = StateGraph()
-
-    def build_graph(self):
-        # 添加节点
-        self.graph.add_node("collect", self.collect_data)
-        self.graph.add_node("analyze", self.analyze_data)
-        self.graph.add_node("decide", self.make_decision)
-
-        # 添加边
-        self.graph.add_edge("collect", "analyze")
-        self.graph.add_edge("analyze", "decide")
-
-        # 设置入口和出口
-        self.graph.set_entry_point("collect")
-        self.graph.set_finish_point("decide")
-
-        return self.graph.compile()
-```
-
-## 🔧 自定义工具
-
-创建自定义工具非常简单：
-
-```python
-from spoon_toolkit.base import BaseTool
-
-class CustomCryptoTool(BaseTool):
-    name = "custom_crypto_tool"
-    description = "获取加密货币的自定义数据"
-
-    def _run(self, symbol: str) -> dict:
-        # 实现你的逻辑
-        return {
-            "symbol": symbol,
-            "data": "..."
-        }
-```
-
-## 🧪 测试
-
-运行所有测试：
-```bash
-pytest tests/
-```
-
-运行特定测试：
-```bash
-pytest tests/test_react_agent.py -v
-```
-
-## 📊 性能优化
-
-- **提示词缓存**: 使用 Anthropic 的 prompt caching 减少成本
-- **流式响应**: 实时显示 LLM 生成内容
-- **工具并行**: 支持多个工具同时执行
-- **状态持久化**: Graph Agent 支持状态保存和恢复
-
-## 🌐 Web3 集成
-
-项目包含完整的 Web3 功能：
-
-```python
-from tools.web3_tools import Web3Tools
-
-web3 = Web3Tools()
-
-# 查询余额
-balance = web3.get_balance("0x...")
-
-# 执行交易
-tx = web3.send_transaction({
-    "to": "0x...",
-    "value": 1000000000000000000  # 1 ETH
-})
-```
-
-## 📹 演示视频
-
-[点击观看完整演示视频](https://www.bilibili.com/video/BV14HFxzPEs7/)
-
-视频内容：
-1. ReAct Agent 实时演示
-2. Graph Agent 工作流展示
-
-## 🤝 贡献指南
-
-欢迎贡献！请遵循以下步骤：
-
-1. Fork 项目
-2. 创建特性分支 (`git checkout -b feature/amazing-feature`)
-3. 提交更改 (`git commit -m 'Add amazing feature'`)
-4. 推送到分支 (`git push origin feature/amazing-feature`)
-5. 创建 Pull Request
-
-## 📄 许可证
-
-Apache 2.0 License - 查看 [LICENSE](LICENSE) 文件
-
-## 🔗 相关资源
-
-- [SpoonOS 官方文档](https://xspoonai.github.io/)
-- [SpoonOS Core](https://github.com/XSpoonAi/spoon-core)
-- [SpoonOS Toolkit](https://github.com/XSpoonAi/spoon-toolkit)
-- [Awesome Skills](https://github.com/XSpoonAi/spoon-awesome-skill)
-
-## 📧 联系方式
-
-- GitHub Issues: [提交问题](https://github.com/your-username/spoon-agent-showcase/issues)
-- Discord: [加入社区](https://discord.gg/xspoonai)
-
-## 🙏 致谢
-
-感谢 SpoonOS 团队提供的强大框架和工具！
-
----
-
-⭐ 如果这个项目对你有帮助，请给一个 Star！
+Apache-2.0，见 [LICENSE](LICENSE)。

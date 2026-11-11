@@ -3,7 +3,8 @@ Notification tools for sending alerts
 """
 
 import os
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
+
 from loguru import logger
 from rich.console import Console
 from rich.panel import Panel
@@ -54,11 +55,7 @@ class NotificationTool:
 
     def _send_console(self, message: str) -> Dict[str, Any]:
         """Send notification to console"""
-        console.print(Panel(
-            message,
-            title="📢 Notification",
-            border_style="green"
-        ))
+        console.print(Panel(message, title="📢 Notification", border_style="green"))
 
         return {
             "success": True,
@@ -144,11 +141,7 @@ class EmailNotificationTool:
         self.smtp_password = os.getenv("SMTP_PASSWORD", "")
 
     def run(
-        self,
-        to: str,
-        subject: str,
-        body: str,
-        from_email: Optional[str] = None
+        self, to: str, subject: str, body: str, from_email: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Send email
@@ -171,8 +164,8 @@ class EmailNotificationTool:
 
         try:
             import smtplib
-            from email.mime.text import MIMEText
             from email.mime.multipart import MIMEMultipart
+            from email.mime.text import MIMEText
 
             from_email = from_email or self.smtp_user
 

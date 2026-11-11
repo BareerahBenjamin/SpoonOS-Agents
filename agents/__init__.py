@@ -2,7 +2,7 @@
 SpoonOS Agent Implementations
 """
 
-from .react_agent import CryptoReActAgent
 from .graph_agent import CryptoAnalysisGraph
+from .react_agent import CryptoReActAgent
 
 __all__ = ["CryptoReActAgent", "CryptoAnalysisGraph"]
