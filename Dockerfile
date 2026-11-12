@@ -8,10 +8,13 @@ RUN npm run build
 
 FROM python:3.12-slim-bookworm AS dependencies
 WORKDIR /app
-ENV UV_PYTHON_DOWNLOADS=never
+ENV UV_PYTHON_DOWNLOADS=never \
+    UV_LINK_MODE=copy \
+    UV_CONCURRENT_DOWNLOADS=8
 RUN python -m pip install --no-cache-dir uv==0.11.32
 COPY pyproject.toml uv.lock ./
-RUN uv sync --locked --no-default-groups --extra api --no-install-project --no-cache
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --locked --no-default-groups --extra api --no-install-project
 
 FROM python:3.12-slim-bookworm AS runtime
 WORKDIR /app
